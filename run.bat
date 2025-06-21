@@ -1,0 +1,1 @@
+docker run --rm -it -p 500:500 -v %CD%:/app -w /app youtube-stream-creator
