@@ -205,6 +205,11 @@ def sync_services_callback(client, user_data, message: MQTTMessage):
             service_start = get_time_by_plan(service_type_id, plan_id, application_id, secret)
             stream_start = service_start - timedelta(minutes=10)  
 
+            # Check if the stream start time has already passed
+            if stream_start < datetime.now(TZ):
+                print(f"Stream time for {date_string} has already passed ({stream_start.strftime('%I:%M%p')}), skipping.")
+                continue    
+
             service_time_str = service_start.strftime("%I:%M%p").lower()
             stream_time_str = stream_start.strftime("%I:%M%p").lower()
 
@@ -219,6 +224,7 @@ def sync_services_callback(client, user_data, message: MQTTMessage):
 
             youtube = authenticate_to_youtube()
             
+
             try:
                 if description != get_scheduled_stream_description(title, youtube):
                     print("Copyright has changed, updating YouTube stream.")
@@ -350,6 +356,8 @@ lastFound = 575
 response = None
 data = None
 def html_to_string(html):
+    if html is None:
+        return ""
     soup = BeautifulSoup(html, 'html.parser')
     return soup.get_text().strip().replace("#", "")
 
@@ -722,8 +730,9 @@ if not all([application_id, secret, service_type_id]):
 
 
 def generateDescription(service_type_id, plan_id, application_id, secret, stream_time_str, service_time_str, day):
-    description =  f"This is the Libertyville Covenant Church Worship Service for {day}. "
-    description += f"The stream will begin at approximately {stream_time_str} CDT and the service will begin at {service_time_str} CDT.\n\n"
+    description =  f"This is the Libertyville Covenant Church Worship Service for {day}."
+    description += f"The stream will begin at approximately {stream_time_str} CDT and the service will begin at {service_time_str} CDT."
+    description += f"\nThe bulletin can be found here: https://libcov.org/bulletin\n\n"
     description += get_copyright_by_plan(service_type_id, plan_id, application_id, secret)
     description += "\n\n#LibertyvilleCovenantChurch #churchathome #churchonline #churchservice"
     return description
@@ -793,6 +802,7 @@ def update_scheduled_stream_description(youtube, title, new_description, start_t
 
 
 MQTTCLIENT.loop_start()
+authenticate_to_youtube()
 print("PCO Youtube Started -- Waiting for commands")
 try:
     while True:
