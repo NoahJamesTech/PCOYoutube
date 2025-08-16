@@ -26,8 +26,7 @@ import io
 import requests # type: ignore
 from PIL import Image # type: ignore
 from googleapiclient.http import MediaIoBaseUpload # type: ignore
-
-
+import difflib
 
 
 class NoStreamError(Exception):
@@ -41,7 +40,7 @@ partial = False
 mqtt_creds = None
 selected_stream_key = "1080p30HLS" 
 stream_key_options = ["1080p30HLS", "1080p30RTMP", "AutoHLS"]
-selected_privacy_status = "Private" 
+selected_privacy_status = "Public" 
 privacy_status_options = ["Public", "Private", "Unlisted"]
 master_enabled = True
 creation_range = 5
@@ -52,6 +51,7 @@ if os.path.exists("creds.json"):
         creds_data = json.load(file)
         mqtt_creds = creds_data.get('mqtt', {})
         streamKeys = creds_data.get('stream_keys', {})
+        discordWebhook = creds_data.get('discord_webhook', {})
 
 
 buttonMQTT = Settings.MQTT(
@@ -65,6 +65,54 @@ device_info = DeviceInfo(
     name="Youtube Stream Creator",
     identifiers="youtube_stream_creator",
 )
+
+
+def discordMessage(title,message,error):
+    color = 0xff0000 if error else 0x00ff00
+    payload = {
+    "embeds": [                         # uncomment to send an embed
+         {
+             "title": title,
+             "description": message,
+             "color": color
+         }
+     ]
+    }
+    response = requests.post(discordWebhook.get("url"), json=payload)
+
+
+def make_unified_diff(old: str, new: str, max_chars: int = 3800) -> str:
+    """Return a Discord-friendly unified diff between old and new descriptions.
+
+    - Uses unified_diff with small context for readability
+    - Wraps in a ```diff code block for syntax highlighting in Discord
+    - Truncates if the payload is too long for a single embed description
+    """
+    old_lines = (old or "").splitlines()
+    new_lines = (new or "").splitlines()
+    diff_lines = difflib.unified_diff(
+        old_lines,
+        new_lines,
+        fromfile="before",
+        tofile="after",
+        lineterm="",
+        n=3,
+    )
+    diff_text = "\n".join(diff_lines)
+    if not diff_text.strip():
+        diff_text = "(no textual differences)"
+
+    # Discord embed description max is 4096 chars (total embed ~6000)
+    # Keep some headroom and wrap as a diff code block
+    prefix = "```diff\n"
+    suffix = "\n```"
+    budget = max_chars - len(prefix) - len(suffix)
+    trimmed = diff_text[:budget]
+    if len(diff_text) > budget:
+        trimmed += "\n... (truncated)"
+    return f"{prefix}{trimmed}{suffix}"
+
+
 
 def debug_switch_callback(client, user_data, message: MQTTMessage):
     payload = message.payload.decode()
@@ -196,58 +244,67 @@ def sync_services_callback(client, user_data, message: MQTTMessage):
     
     # Loop through each day in the range
     for day_offset in range(creation_range + 1):  # +1 to include today
-        scanningDate = datetime.now(TZ) + timedelta(days=day_offset)
-        date_string = datetime_to_string(scanningDate)
-        print(f"Checking for services on {date_string}")
-        
-        try: 
-            plan_id = get_plan_id_by_date(service_type_id, date_string, application_id, secret, True)
-            service_start = get_time_by_plan(service_type_id, plan_id, application_id, secret)
-            stream_start = service_start - timedelta(minutes=10)  
-
-            # Check if the stream start time has already passed
-            if stream_start < datetime.now(TZ):
-                print(f"Stream time for {date_string} has already passed ({stream_start.strftime('%I:%M%p')}), skipping.")
-                continue    
-
-            service_time_str = service_start.strftime("%I:%M%p").lower()
-            stream_time_str = stream_start.strftime("%I:%M%p").lower()
-
-            serviceDate = datetime_to_string(service_start)
-
-            name = get_name_by_plan(service_type_id, plan_id, application_id, secret)
-
-            title = f"Libertyville Covenant Church {name} {serviceDate} - {service_time_str}"
-            description = generateDescription(service_type_id, plan_id, application_id, secret, stream_time_str, service_time_str, serviceDate)
-
-            thumbnail = thumbnail_from_url(get_image_by_plan(service_type_id, plan_id, application_id, secret))
-
-            youtube = authenticate_to_youtube()
+        try:
+            scanningDate = datetime.now(TZ) + timedelta(days=day_offset)
+            date_string = datetime_to_string(scanningDate)
+            print(f"Checking for services on {date_string}")
+            time.sleep(5)
             
+            try: 
+                plan_id = get_plan_id_by_date(service_type_id, date_string, application_id, secret, True)
+                service_start = get_time_by_plan(service_type_id, plan_id, application_id, secret)
+                stream_start = service_start - timedelta(minutes=10)  
 
-            try:
-                if description != get_scheduled_stream_description(title, youtube):
-                    print("Copyright has changed, updating YouTube stream.")
-                    update_scheduled_stream_description(youtube, title, description, service_start)
-                else:
-                    print("Copyright has not changed, no update needed.")
-                    text_sensors["last_check"].set_state(datetime.now(TZ).strftime("%Y-%m-%d %I:%M %p"))
-            except NoStreamError:
-                print(f"No existing stream found for {serviceDate}, creating new one.")
-                schedule_youtube_live_stream(
-                    youtube,
-                    title,
-                    description,
-                    service_start, 
-                    streamKeys.get(selected_stream_key), 
-                    "PL9xSMDIz2M74Joy1_eLihy_7jYVhCvLkV", #playlist id 
-                    29, 
-                    thumbnail, 
-                    selected_privacy_status.lower()
-                )
-        except NotFoundErr:
-            print(f"No service found for {date_string}")
-            continue  # Continue to next day
+                # Check if the stream start time has already passed
+                if stream_start < datetime.now(TZ):
+                    print(f"Stream time for {date_string} has already passed ({stream_start.strftime('%I:%M%p')}), skipping.")
+                    continue    
+
+                service_time_str = service_start.strftime("%I:%M%p").lower()
+                stream_time_str = stream_start.strftime("%I:%M%p").lower()
+
+                serviceDate = datetime_to_string(service_start)
+
+                name = get_name_by_plan(service_type_id, plan_id, application_id, secret)
+
+                title = f"Libertyville Covenant Church {name} {serviceDate} - {service_time_str}"
+                description = generateDescription(service_type_id, plan_id, application_id, secret, stream_time_str, service_time_str, serviceDate)
+
+                thumbnail = thumbnail_from_url(get_image_by_plan(service_type_id, plan_id, application_id, secret))
+
+                youtube = authenticate_to_youtube()
+                
+
+                try:
+                    old_description = get_scheduled_stream_description(title, youtube)
+                    if description != old_description:
+                        print("Description changed, updating YouTube stream.")
+                        update_scheduled_stream_description(youtube, title, description, service_start, old_description)
+                    else:
+                        print("Copyright has not changed, no update needed.")
+                        text_sensors["last_check"].set_state(datetime.now(TZ).strftime("%Y-%m-%d %I:%M %p"))
+                except NoStreamError:
+                    print(f"No existing stream found for {serviceDate}, creating new one.")
+                    schedule_youtube_live_stream(
+                        youtube,
+                        title,
+                        description,
+                        service_start, 
+                        streamKeys.get(selected_stream_key), 
+                        "PL9xSMDIz2M74Joy1_eLihy_7jYVhCvLkV", #playlist id 
+                        29, 
+                        thumbnail, 
+                        selected_privacy_status.lower()
+                    )
+            except NotFoundErr:
+                print(f"No service found for {date_string}")
+                continue  # Continue to next day
+        except Exception as e:
+            print(f"An error occurred while processing {date_string}: {e}")
+            if '/artworks/original/missing.png' in str(e):
+                e = "No thumbnail found for this service, please upload one in PCO."
+            discordMessage(f"Error processing {date_string}",f"{e}", True)
+            continue
     
     print("Service sync complete.")
         
@@ -379,7 +436,6 @@ def queryPCO(service_type_id,offset,increment,application_id,secret):
 
 def get_plan_id_by_date(service_type_id, date, application_id, secret, findingService):
     global lastFound, response, data
-    mathNumber = 1000
     increment = 25
     offset = lastFound
     findingService = False
@@ -397,6 +453,7 @@ def get_plan_id_by_date(service_type_id, date, application_id, secret, findingSe
                         print(f"Found ballpark, scanning narrowly")
                         data = "PewPewPew"
                         get_plan_id_by_date(service_type_id, date, application_id, secret, True)
+                    print(plan['id'])
                     return plan['id']
             offset+=increment
             #print(f"{date} not found, offset increasing to {offset}")
@@ -405,12 +462,12 @@ def get_plan_id_by_date(service_type_id, date, application_id, secret, findingSe
             print(f"Error: Failed to retrieve plans: {response.status}")
             return None
 
-        if offset > lastFound + mathNumber:
+        if plans['meta']['count'] == 0:
             queryPCO(service_type_id,lastFound,increment,application_id,secret)
             raise NotFoundErr(f"No plan found for {date}")
 
 def get_copyright_by_plan(service_type_id, plan_id, application_id, secret):
-    URL = f'/services/v2/service_types/{service_type_id}/plans/{plan_id}/items'
+    URL = f'/services/v2/service_types/{service_type_id}/plans/{plan_id}/items?per_page=100'
     HOST = 'api.planningcenteronline.com'
     conn = http.client.HTTPSConnection(HOST, context=ssl._create_unverified_context())
     auth = base64.b64encode(f'{application_id}:{secret}'.encode()).decode()
@@ -423,6 +480,7 @@ def get_copyright_by_plan(service_type_id, plan_id, application_id, secret):
     conn.request('GET', URL, headers=headers)
     response = conn.getresponse()
     data = response.read().decode()
+    print(data)
     if response.status == 200:
         items = json.loads(data)
         # Filter items by title and get the id
@@ -494,6 +552,24 @@ def get_image_by_plan(service_type_id, plan_id, application_id, secret):
     item = json.loads(data)
     return item['included'][0]['attributes']['artwork_original']
 
+
+def has_image_been_changed(service_type_id, plan_id, application_id, secret):
+    URL = f'/services/v2/service_types/{service_type_id}/plans/{plan_id}?include=series'
+    HOST = 'api.planningcenteronline.com'
+    conn = http.client.HTTPSConnection(HOST, context=ssl._create_unverified_context())
+    auth = base64.b64encode(f'{application_id}:{secret}'.encode()).decode()
+
+    headers = {
+        'Authorization': f'Basic {auth}',
+        'Content-Type': 'application/json'
+    }
+
+    conn.request('GET', URL, headers=headers)
+    response = conn.getresponse()
+    data = response.read().decode()
+    item = json.loads(data)
+    print(datetime.fromisoformat(item['included'][0]['attributes']['updated_at'].replace("Z", "+00:00")).astimezone(TZ))
+    
 
 def get_time_by_plan(service_type_id, plan_id, application_id, secret):
     URL = f'/services/v2/service_types/{service_type_id}/plans/{plan_id}?include=plan_times'
@@ -670,12 +746,15 @@ def schedule_youtube_live_stream(
     ).execute()
     print("   -> Successfully bound.")
 
-    print(f"4. Uploading thumbnail...")
-    youtube.thumbnails().set(
-        videoId=broadcast_id,
-        media_body=thumbnail_media_upload
-    ).execute()
-    print("   -> Thumbnail set successfully.")
+    if thumbnail_media_upload is not None:
+        print(f"4. Uploading thumbnail...")
+        youtube.thumbnails().set(
+            videoId=broadcast_id,
+            media_body=thumbnail_media_upload
+        ).execute()
+        print("   -> Thumbnail set successfully.")
+    else:
+        print("4. No thumbnail provided; skipping thumbnail upload.")
 
     print(f"5. Setting video category to ID: {video_category_id}...")
     video_update_body = {
@@ -709,6 +788,9 @@ def schedule_youtube_live_stream(
     print("   -> Successfully added to playlist.")
     
     print("--- Scheduling Complete! ---")
+    
+    discordMessage("YouTube Stream Scheduled",
+                   f"Stream '{title}' has been scheduled successfully for {start_time.strftime('%Y-%m-%d %I:%M %p')} (CDT).\n\n\n{description}", False)
 
     text_sensors["last_update_time"].set_state(datetime.now(TZ).strftime("%Y-%m-%d %I:%M %p"))
     text_sensors["last_service_updated"].set_state(datetime_to_string(start_time.date()))
@@ -733,7 +815,19 @@ def generateDescription(service_type_id, plan_id, application_id, secret, stream
     description =  f"This is the Libertyville Covenant Church Worship Service for {day}."
     description += f"The stream will begin at approximately {stream_time_str} CDT and the service will begin at {service_time_str} CDT."
     description += f"\nThe bulletin can be found here: https://libcov.org/bulletin\n\n"
-    description += get_copyright_by_plan(service_type_id, plan_id, application_id, secret)
+    # Fetch copyright details, but don't fail the whole flow if it's missing in PCO
+    try:
+        copyright_block = get_copyright_by_plan(service_type_id, plan_id, application_id, secret)
+    except NotFoundErr as e:
+        print(f"Copyright item not found in PCO for plan {plan_id}: {e}. Proceeding without it.")
+        discordMessage("Copyright Info Not Found in PCO", f"PlanID: {plan_id} | Date: {day}", True)
+        copyright_block = ""
+    except Exception as e:
+        print(f"Unexpected error retrieving copyright for plan {plan_id}: {e}. Proceeding without it.")
+        copyright_block = ""
+
+    if copyright_block:
+        description += copyright_block
     description += "\n\n#LibertyvilleCovenantChurch #churchathome #churchonline #churchservice"
     return description
 
@@ -757,7 +851,7 @@ def get_scheduled_stream_description(title, youtube):
         print(f"{e}")
         return f"Error fetching from YouTube: {e}"
 
-def update_scheduled_stream_description(youtube, title, new_description, start_time):
+def update_scheduled_stream_description(youtube, title, new_description, start_time, old_description: str | None = None):
     try:
         # Search for the upcoming broadcast by title
         request = youtube.liveBroadcasts().list(
@@ -790,6 +884,25 @@ def update_scheduled_stream_description(youtube, title, new_description, start_t
         ).execute()
         
         print(f"Successfully updated description for stream: '{title}'")
+        # Build and send a unified diff of the description changes
+        if old_description is not None:
+            diff_payload = make_unified_diff(old_description, new_description)
+        else:
+            diff_payload = new_description
+
+        # Log to console as well for quick inspection
+        try:
+            print("\n===== Description Diff =====")
+            if isinstance(diff_payload, str):
+                # Strip code fences for console readability
+                print(diff_payload.replace("```diff\n", "").replace("\n```", ""))
+            else:
+                print(diff_payload)
+            print("===== End Diff =====\n")
+        except Exception:
+            pass
+
+        discordMessage(f"YouTube Stream Updated: {title}", f"{diff_payload}", False)
         text_sensors["last_update_time"].set_state(datetime.now(TZ).strftime("%Y-%m-%d %I:%M %p"))
         text_sensors["last_service_updated"].set_state(datetime_to_string(start_time.date()))
         return True
@@ -803,6 +916,9 @@ def update_scheduled_stream_description(youtube, title, new_description, start_t
 
 MQTTCLIENT.loop_start()
 authenticate_to_youtube()
+
+sync_services_callback(None,None,None)
+
 print("PCO Youtube Started -- Waiting for commands")
 try:
     while True:
@@ -812,3 +928,4 @@ except KeyboardInterrupt:
     binary_sensors["Youtube Stream Creator"].off()
     MQTTCLIENT.loop_stop()
     MQTTCLIENT.disconnect()
+
