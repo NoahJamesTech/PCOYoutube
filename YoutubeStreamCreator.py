@@ -67,16 +67,20 @@ device_info = DeviceInfo(
 )
 
 
-def discordMessage(title,message,error):
+def discordMessage(title,message,error,link=None):
     color = 0xff0000 if error else 0x00ff00
+    embed = {
+        "title": title,
+        "description": message,
+        "color": color
+    }
+    
+    # Add clickable link as a field if provided
+    if link:
+        embed["url"] = link  # Makes the title clickable
+        
     payload = {
-    "embeds": [                         # uncomment to send an embed
-         {
-             "title": title,
-             "description": message,
-             "color": color
-         }
-     ]
+        "embeds": [embed]
     }
     response = requests.post(discordWebhook.get("url"), json=payload)
 
@@ -789,8 +793,11 @@ def schedule_youtube_live_stream(
     
     print("--- Scheduling Complete! ---")
     
+    # Create YouTube URL
+    youtube_url = f"https://www.youtube.com/watch?v={broadcast_id}"
+    
     discordMessage("YouTube Stream Scheduled",
-                   f"Stream '{title}' has been scheduled successfully for {start_time.strftime('%Y-%m-%d %I:%M %p')} (CDT).\n\n\n{description}", False)
+                   f"Stream '{title}' has been scheduled successfully for {start_time.strftime('%Y-%m-%d %I:%M %p')} (CDT).\n\n\n{description}", False, youtube_url)
 
     text_sensors["last_update_time"].set_state(datetime.now(TZ).strftime("%Y-%m-%d %I:%M %p"))
     text_sensors["last_service_updated"].set_state(datetime_to_string(start_time.date()))
@@ -902,7 +909,10 @@ def update_scheduled_stream_description(youtube, title, new_description, start_t
         except Exception:
             pass
 
-        discordMessage(f"YouTube Stream Updated: {title}", f"{diff_payload}", False)
+        # Create YouTube URL
+        youtube_url = f"https://www.youtube.com/watch?v={broadcast_id}"
+        
+        discordMessage(f"YouTube Stream Updated: {title}", f"{diff_payload}", False, youtube_url)
         text_sensors["last_update_time"].set_state(datetime.now(TZ).strftime("%Y-%m-%d %I:%M %p"))
         text_sensors["last_service_updated"].set_state(datetime_to_string(start_time.date()))
         return True
@@ -917,14 +927,24 @@ def update_scheduled_stream_description(youtube, title, new_description, start_t
 MQTTCLIENT.loop_start()
 authenticate_to_youtube()
 
-sync_services_callback(None,None,None)
+#sync_services_callback(None,None,None)
 
 print("PCO Youtube Started -- Waiting for commands")
+discordMessage(
+    "Youtube Stream Creator Started", 
+    "The PCO Youtube Stream Creator has started and is online.", 
+    False
+)
 try:
     while True:
         time.sleep(1)
 except KeyboardInterrupt:
     print("Shutting Down")
+    discordMessage(
+        "Youtube Stream Creator Shutdown",
+        "The Youtube Stream Creator is shutting down.",
+        False
+    )
     binary_sensors["Youtube Stream Creator"].off()
     MQTTCLIENT.loop_stop()
     MQTTCLIENT.disconnect()
