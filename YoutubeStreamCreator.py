@@ -85,13 +85,7 @@ def discordMessage(title,message,error,link=None):
     response = requests.post(discordWebhook.get("url"), json=payload)
 
 
-def make_unified_diff(old: str, new: str, max_chars: int = 3800) -> str:
-    """Return a Discord-friendly unified diff between old and new descriptions.
-
-    - Uses unified_diff with small context for readability
-    - Wraps in a ```diff code block for syntax highlighting in Discord
-    - Truncates if the payload is too long for a single embed description
-    """
+def makeDiff(old: str, new: str, max_chars: int = 3800) -> str:
     old_lines = (old or "").splitlines()
     new_lines = (new or "").splitlines()
     diff_lines = difflib.unified_diff(
@@ -106,8 +100,6 @@ def make_unified_diff(old: str, new: str, max_chars: int = 3800) -> str:
     if not diff_text.strip():
         diff_text = "(no textual differences)"
 
-    # Discord embed description max is 4096 chars (total embed ~6000)
-    # Keep some headroom and wrap as a diff code block
     prefix = "```diff\n"
     suffix = "\n```"
     budget = max_chars - len(prefix) - len(suffix)
@@ -118,7 +110,7 @@ def make_unified_diff(old: str, new: str, max_chars: int = 3800) -> str:
 
 
 
-def debug_switch_callback(client, user_data, message: MQTTMessage):
+def debugCallback(client, user_data, message: MQTTMessage):
     payload = message.payload.decode()
     if payload == "ON":
         print("Debug Mode Turned On!")
@@ -136,10 +128,10 @@ debug_mode_switch = Switch(
             device=device_info,
         )
     ),
-    debug_switch_callback,
+    debugCallback,
 )
 
-def stream_key_selector_callback(client, user_data, message: MQTTMessage):
+def streamKeyCallback(client, user_data, message: MQTTMessage):
     global selected_stream_key
     payload = message.payload.decode()
     if payload in stream_key_options:
@@ -159,10 +151,10 @@ stream_key_selector = Select(
             device=device_info,
         )
     ),
-    stream_key_selector_callback,
+    streamKeyCallback,
 )
 
-def privacy_status_selector_callback(client, user_data, message: MQTTMessage):
+def privacyStatusCallback(client, user_data, message: MQTTMessage):
     global selected_privacy_status
     payload = message.payload.decode()
     if payload in privacy_status_options:
@@ -182,10 +174,10 @@ privacy_status_selector = Select(
             device=device_info,
         )
     ),
-    privacy_status_selector_callback,
+    privacyStatusCallback,
 )
 
-def master_enable_callback(client, user_data, message: MQTTMessage):
+def enableCallback(client, user_data, message: MQTTMessage):
     global master_enabled
     payload = message.payload.decode()
     if payload == "ON":
@@ -205,10 +197,10 @@ master_enable_switch = Switch(
             unique_id="master_enable_switch",
             device=device_info,
         )
-    ),    master_enable_callback,
+    ),    enableCallback,
 )
 
-def creation_range_callback(client, user_data, message: MQTTMessage):
+def creationRangeCallback(client, user_data, message: MQTTMessage):
     global creation_range
     payload = message.payload.decode()
     try:
@@ -236,10 +228,10 @@ creation_range_input = Number(
             device=device_info,
         )
     ),
-    creation_range_callback,
+    creationRangeCallback,
 )
 
-def sync_services_callback(client, user_data, message: MQTTMessage):
+def syncServicesCallback(client, user_data, message: MQTTMessage):
     if not master_enabled:
         print("Master switch is disabled. Cannot sync services.")
         return
@@ -250,13 +242,13 @@ def sync_services_callback(client, user_data, message: MQTTMessage):
     for day_offset in range(creation_range + 1):  # +1 to include today
         try:
             scanningDate = datetime.now(TZ) + timedelta(days=day_offset)
-            date_string = datetime_to_string(scanningDate)
+            date_string = dtToStr(scanningDate)
             print(f"Checking for services on {date_string}")
             time.sleep(5)
             
             try: 
                 plan_id = get_plan_id_by_date(service_type_id, date_string, application_id, secret, True)
-                service_start = get_time_by_plan(service_type_id, plan_id, application_id, secret)
+                service_start = getTime(service_type_id, plan_id, application_id, secret)
                 stream_start = service_start - timedelta(minutes=10)  
 
                 # Check if the stream start time has already passed
@@ -267,29 +259,29 @@ def sync_services_callback(client, user_data, message: MQTTMessage):
                 service_time_str = service_start.strftime("%I:%M%p").lower()
                 stream_time_str = stream_start.strftime("%I:%M%p").lower()
 
-                serviceDate = datetime_to_string(service_start)
+                serviceDate = dtToStr(service_start)
 
-                name = get_name_by_plan(service_type_id, plan_id, application_id, secret)
+                name = getName(service_type_id, plan_id, application_id, secret)
 
                 title = f"Libertyville Covenant Church {name} {serviceDate} - {service_time_str}"
                 description = generateDescription(service_type_id, plan_id, application_id, secret, stream_time_str, service_time_str, serviceDate)
 
-                thumbnail = thumbnail_from_url(get_image_by_plan(service_type_id, plan_id, application_id, secret))
+                thumbnail = thumbnailFromUrl(getThumbnail(service_type_id, plan_id, application_id, secret))
 
-                youtube = authenticate_to_youtube()
+                youtube = YTauth()
                 
 
                 try:
-                    old_description = get_scheduled_stream_description(title, youtube)
+                    old_description = getStreamDescription(title, youtube)
                     if description != old_description:
                         print("Description changed, updating YouTube stream.")
-                        update_scheduled_stream_description(youtube, title, description, service_start, old_description)
+                        updateStreamDescription(youtube, title, description, service_start, old_description)
                     else:
                         print("Copyright has not changed, no update needed.")
                         text_sensors["last_check"].set_state(datetime.now(TZ).strftime("%Y-%m-%d %I:%M %p"))
                 except NoStreamError:
                     print(f"No existing stream found for {serviceDate}, creating new one.")
-                    schedule_youtube_live_stream(
+                    scheduleStream(
                         youtube,
                         title,
                         description,
@@ -322,7 +314,7 @@ sync_services_button = Button(
             device=device_info,
         )
     ),
-    sync_services_callback,
+    syncServicesCallback,
 )
 
 MQTTCLIENT = mqtt.Client(
@@ -470,7 +462,7 @@ def get_plan_id_by_date(service_type_id, date, application_id, secret, findingSe
             queryPCO(service_type_id,lastFound,increment,application_id,secret)
             raise NotFoundErr(f"No plan found for {date}")
 
-def get_copyright_by_plan(service_type_id, plan_id, application_id, secret):
+def getCopyright(service_type_id, plan_id, application_id, secret):
     URL = f'/services/v2/service_types/{service_type_id}/plans/{plan_id}/items?per_page=100'
     HOST = 'api.planningcenteronline.com'
     conn = http.client.HTTPSConnection(HOST, context=ssl._create_unverified_context())
@@ -504,7 +496,7 @@ def get_copyright_by_plan(service_type_id, plan_id, application_id, secret):
     return html_to_string(copyright)
 
 
-def get_name_by_plan(service_type_id, plan_id, application_id, secret):
+def getName(service_type_id, plan_id, application_id, secret):
     URL = f'/services/v2/service_types/{service_type_id}/plans/{plan_id}/items'
     HOST = 'api.planningcenteronline.com'
     conn = http.client.HTTPSConnection(HOST, context=ssl._create_unverified_context())
@@ -539,7 +531,7 @@ def get_name_by_plan(service_type_id, plan_id, application_id, secret):
 
 
 
-def get_image_by_plan(service_type_id, plan_id, application_id, secret):
+def getThumbnail(service_type_id, plan_id, application_id, secret):
     URL = f'/services/v2/service_types/{service_type_id}/plans/{plan_id}?include=series'
     HOST = 'api.planningcenteronline.com'
     conn = http.client.HTTPSConnection(HOST, context=ssl._create_unverified_context())
@@ -575,7 +567,7 @@ def has_image_been_changed(service_type_id, plan_id, application_id, secret):
     print(datetime.fromisoformat(item['included'][0]['attributes']['updated_at'].replace("Z", "+00:00")).astimezone(TZ))
     
 
-def get_time_by_plan(service_type_id, plan_id, application_id, secret):
+def getTime(service_type_id, plan_id, application_id, secret):
     URL = f'/services/v2/service_types/{service_type_id}/plans/{plan_id}?include=plan_times'
     HOST = 'api.planningcenteronline.com'
     conn = http.client.HTTPSConnection(HOST, context=ssl._create_unverified_context())
@@ -599,7 +591,7 @@ def get_time_by_plan(service_type_id, plan_id, application_id, secret):
     return starts_at
 
 
-def thumbnail_from_url(url):
+def thumbnailFromUrl(url):
     resp = requests.get(url)
     resp.raise_for_status()
 
@@ -620,14 +612,14 @@ def thumbnail_from_url(url):
     return MediaIoBaseUpload(buf, mimetype="image/jpeg", resumable=False)
 
 
-def datetime_to_string(dt):
+def dtToStr(dt):
     return dt.strftime("%B %d, %Y").replace(" 0", " ").lstrip("0")
 
 def rightNow():
     return datetime.now(TZ).strftime('%Y-%m-%d %I:%M %p')
 
 
-def authenticate_to_youtube():
+def YTauth():
     SCOPES = ["https://www.googleapis.com/auth/youtube.force-ssl"]
     token_path = "token.json"
     creds = None
@@ -688,7 +680,7 @@ def authenticate_to_youtube():
 
     return build('youtube', 'v3', credentials=creds)
 
-def schedule_youtube_live_stream(
+def scheduleStream(
     youtube,
     title,
     description,
@@ -824,7 +816,7 @@ def generateDescription(service_type_id, plan_id, application_id, secret, stream
     description += f"\nThe bulletin can be found here: https://libcov.org/bulletin\n\n"
     # Fetch copyright details, but don't fail the whole flow if it's missing in PCO
     try:
-        copyright_block = get_copyright_by_plan(service_type_id, plan_id, application_id, secret)
+        copyright_block = getCopyright(service_type_id, plan_id, application_id, secret)
     except NotFoundErr as e:
         print(f"Copyright item not found in PCO for plan {plan_id}: {e}. Proceeding without it.")
         discordMessage("Copyright Info Not Found in PCO", f"PlanID: {plan_id} | Date: {day}", True)
@@ -839,7 +831,7 @@ def generateDescription(service_type_id, plan_id, application_id, secret, stream
     return description
 
 
-def get_scheduled_stream_description(title, youtube):
+def getStreamDescription(title, youtube):
     try:
         request = youtube.liveBroadcasts().list(
             part="snippet",
@@ -858,7 +850,7 @@ def get_scheduled_stream_description(title, youtube):
         print(f"{e}")
         return f"Error fetching from YouTube: {e}"
 
-def update_scheduled_stream_description(youtube, title, new_description, start_time, old_description: str | None = None):
+def updateStreamDescription(youtube, title, new_description, start_time, old_description: str | None = None):
     try:
         # Search for the upcoming broadcast by title
         request = youtube.liveBroadcasts().list(
@@ -893,7 +885,7 @@ def update_scheduled_stream_description(youtube, title, new_description, start_t
         print(f"Successfully updated description for stream: '{title}'")
         # Build and send a unified diff of the description changes
         if old_description is not None:
-            diff_payload = make_unified_diff(old_description, new_description)
+            diff_payload = makeDiff(old_description, new_description)
         else:
             diff_payload = new_description
 
@@ -914,7 +906,7 @@ def update_scheduled_stream_description(youtube, title, new_description, start_t
         
         discordMessage(f"YouTube Stream Updated: {title}", f"{diff_payload}", False, youtube_url)
         text_sensors["last_update_time"].set_state(datetime.now(TZ).strftime("%Y-%m-%d %I:%M %p"))
-        text_sensors["last_service_updated"].set_state(datetime_to_string(start_time.date()))
+        text_sensors["last_service_updated"].set_state(dtToStr(start_time.date()))
         return True
         
     except NoStreamError:
@@ -925,16 +917,16 @@ def update_scheduled_stream_description(youtube, title, new_description, start_t
 
 
 MQTTCLIENT.loop_start()
-authenticate_to_youtube()
+YTauth()
 
 #sync_services_callback(None,None,None)
 
 print("PCO Youtube Started -- Waiting for commands")
-discordMessage(
-    "Youtube Stream Creator Started", 
-    "The PCO Youtube Stream Creator has started and is online.", 
-    False
-)
+#discordMessage(
+#    "Youtube Stream Creator Started", 
+#    "The PCO Youtube Stream Creator has started and is online.", 
+#    False
+#)
 try:
     while True:
         time.sleep(1)
