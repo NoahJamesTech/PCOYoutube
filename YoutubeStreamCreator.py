@@ -792,7 +792,7 @@ def scheduleStream(
                    f"Stream '{title}' has been scheduled successfully for {start_time.strftime('%Y-%m-%d %I:%M %p')} (CDT).\n\n\n{description}", False, youtube_url)
 
     text_sensors["last_update_time"].set_state(datetime.now(TZ).strftime("%Y-%m-%d %I:%M %p"))
-    text_sensors["last_service_updated"].set_state(datetime_to_string(start_time.date()))
+    text_sensors["last_service_updated"].set_state(dtToStr(start_time.date()))
     return broadcast_response
 
 planning_center_creds = creds_data.get('planning_center', {})
